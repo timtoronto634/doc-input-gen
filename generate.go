@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
 	"io"
 	"io/fs"
@@ -56,8 +57,7 @@ func shouldIgnore(path string, gitIgnore, summaryIgnore *ignore.GitIgnore) bool 
 		(summaryIgnore != nil && summaryIgnore.MatchesPath(path))
 }
 
-func generateProjectSummary(rootDir string) {
-
+func generateProjectSummary(rootDir string, targetFiles []string) {
 	gitIgnore, err := ignore.CompileIgnoreFile(filepath.Join(rootDir, ".gitignore"))
 	if err != nil && !os.IsNotExist(err) {
 		fmt.Printf("failed to compile .gitignore: %v\n", err)
@@ -84,30 +84,14 @@ func generateProjectSummary(rootDir string) {
 		return
 	}
 
-	// path : full path
-	// d : directory entry
-	err = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
-		fmt.Printf("Processing %s\n", path)
-		if err != nil {
-			return err
-		}
-
+	processFile := func(path string) error {
 		relPath, err := filepath.Rel(rootDir, path)
 		if err != nil {
 			return fmt.Errorf("failed to get relative path: %v", err)
 		}
 
 		if shouldIgnore(relPath, gitIgnore, summaryIgnore) {
-			fmt.Printf("Ignoring %s", relPath)
-			if d.IsDir() {
-				fmt.Printf(" (directory)\n")
-				return filepath.SkipDir
-			}
-			fmt.Printf(" (file)\n")
-			return nil
-		}
-
-		if d.IsDir() {
+			fmt.Printf("Ignoring %s\n", relPath)
 			return nil
 		}
 
@@ -127,10 +111,34 @@ func generateProjectSummary(rootDir string) {
 		}
 
 		return nil
-	})
+	}
+
+	if len(targetFiles) == 0 {
+		// Process all files
+		err = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+
+			if d.IsDir() {
+				return nil
+			}
+
+			return processFile(path)
+		})
+	} else {
+		// Process only specified files
+		for _, file := range targetFiles {
+			fullPath := filepath.Join(rootDir, file)
+			err := processFile(fullPath)
+			if err != nil {
+				fmt.Printf("Error processing file %s: %v\n", file, err)
+			}
+		}
+	}
 
 	if err != nil {
-		fmt.Printf("failed to walk directory: %v", err)
+		fmt.Printf("failed to process files: %v", err)
 		return
 	}
 }
@@ -147,5 +155,31 @@ func generate() {
 			return
 		}
 	}
-	generateProjectSummary(projectDirectory)
+
+	var option string
+	fmt.Print("Enter 'all' to process all files, or provide a filepath for target files: ")
+	fmt.Scanln(&option)
+
+	var targetFiles []string
+	if option != "all" && option != "" {
+		// Read target files from the specified file
+		file, err := os.Open(option)
+		if err != nil {
+			fmt.Printf("Error opening file %s: %v\n", option, err)
+			return
+		}
+		defer file.Close()
+
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			targetFiles = append(targetFiles, strings.TrimSpace(scanner.Text()))
+		}
+
+		if err := scanner.Err(); err != nil {
+			fmt.Printf("Error reading file %s: %v\n", option, err)
+			return
+		}
+	}
+
+	generateProjectSummary(projectDirectory, targetFiles)
 }
