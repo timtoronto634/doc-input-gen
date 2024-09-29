@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -24,14 +25,14 @@ var predefinedIgnores = []string{
 func isBinary(filePath string) bool {
 	file, err := os.Open(filePath)
 	if err != nil {
-		return false
+		return true // Assume binary if we can't open the file
 	}
 	defer file.Close()
 
 	var buf [512]byte
 	n, err := file.Read(buf[:])
-	if err != nil {
-		return false
+	if err != nil && err != io.EOF {
+		return true // Assume binary if we can't read the file
 	}
 
 	for _, b := range buf[:n] {
@@ -107,6 +108,11 @@ func generateProjectSummary(rootDir string) {
 		}
 
 		if d.IsDir() {
+			return nil
+		}
+
+		if isBinary(path) {
+			fmt.Printf("Ignoring binary file %s\n", relPath)
 			return nil
 		}
 
