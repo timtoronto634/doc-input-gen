@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	ignore "github.com/sabhiram/go-gitignore"
@@ -57,7 +58,7 @@ func shouldIgnore(path string, gitIgnore, summaryIgnore *ignore.GitIgnore) bool 
 		(summaryIgnore != nil && summaryIgnore.MatchesPath(path))
 }
 
-func generateProjectSummary(rootDir string, targetFiles []string) {
+func generateProjectSummary(rootDir string, regexPatterns []*regexp.Regexp) {
 	gitIgnore, err := ignore.CompileIgnoreFile(filepath.Join(rootDir, ".gitignore"))
 	if err != nil && !os.IsNotExist(err) {
 		fmt.Printf("failed to compile .gitignore: %v\n", err)
@@ -113,34 +114,65 @@ func generateProjectSummary(rootDir string, targetFiles []string) {
 		return nil
 	}
 
-	if len(targetFiles) == 0 {
-		// Process all files
-		err = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
+	err = filepath.WalkDir(rootDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
 
-			if d.IsDir() {
-				return nil
-			}
+		if d.IsDir() {
+			return nil
+		}
 
+		relPath, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return fmt.Errorf("failed to get relative path: %v", err)
+		}
+
+		if len(regexPatterns) == 0 {
+			// Process all files if no patterns are specified
 			return processFile(path)
-		})
-	} else {
-		// Process only specified files
-		for _, file := range targetFiles {
-			fullPath := filepath.Join(rootDir, file)
-			err := processFile(fullPath)
-			if err != nil {
-				fmt.Printf("Error processing file %s: %v\n", file, err)
+		}
+
+		for _, pattern := range regexPatterns {
+			if pattern.MatchString(relPath) {
+				return processFile(path)
 			}
 		}
-	}
+
+		return nil
+	})
 
 	if err != nil {
 		fmt.Printf("failed to process files: %v", err)
 		return
 	}
+}
+
+func readRegexPatternsFromFile(filePath string) ([]*regexp.Regexp, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file: %v", err)
+	}
+	defer file.Close()
+
+	var patterns []*regexp.Regexp
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		pattern := strings.TrimSpace(scanner.Text())
+		if pattern != "" {
+			regex, err := regexp.Compile(pattern)
+			if err != nil {
+				return nil, fmt.Errorf("failed to compile regex pattern '%s': %v", pattern, err)
+			}
+			patterns = append(patterns, regex)
+		}
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("error reading file: %v", err)
+	}
+
+	return patterns, nil
 }
 
 func generate() {
@@ -157,29 +189,18 @@ func generate() {
 	}
 
 	var option string
-	fmt.Print("Enter 'all' to process all files, or provide a filepath for target files: ")
+	fmt.Print("Enter 'all' to process all files, or provide a filepath for regex patterns: ")
 	fmt.Scanln(&option)
 
-	var targetFiles []string
+	var regexPatterns []*regexp.Regexp
+	var err error
 	if option != "all" && option != "" {
-		// Read target files from the specified file
-		file, err := os.Open(option)
+		regexPatterns, err = readRegexPatternsFromFile(option)
 		if err != nil {
-			fmt.Printf("Error opening file %s: %v\n", option, err)
-			return
-		}
-		defer file.Close()
-
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			targetFiles = append(targetFiles, strings.TrimSpace(scanner.Text()))
-		}
-
-		if err := scanner.Err(); err != nil {
-			fmt.Printf("Error reading file %s: %v\n", option, err)
+			fmt.Printf("Error reading regex patterns: %v\n", err)
 			return
 		}
 	}
 
-	generateProjectSummary(projectDirectory, targetFiles)
+	generateProjectSummary(projectDirectory, regexPatterns)
 }
