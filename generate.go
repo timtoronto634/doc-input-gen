@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -58,6 +59,54 @@ func shouldIgnore(path string, gitIgnore, summaryIgnore *ignore.GitIgnore) bool 
 		(summaryIgnore != nil && summaryIgnore.MatchesPath(path))
 }
 
+type DirectoryStructure struct {
+	Directories []string `json:"directories"`
+	Files       []string `json:"files"`
+}
+
+func captureDirectoryStructure(rootDir string, gitIgnore, summaryIgnore *ignore.GitIgnore) map[string]DirectoryStructure {
+	structure := make(map[string]DirectoryStructure)
+
+	filepath.Walk(rootDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		relPath, err := filepath.Rel(rootDir, path)
+		if err != nil {
+			return err
+		}
+
+		if relPath == "." {
+			relPath = ""
+		}
+
+		if shouldIgnore(relPath, gitIgnore, summaryIgnore) {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
+		dirPath := filepath.Dir(relPath)
+		if dirPath == "." {
+			dirPath = ""
+		}
+
+		entry := structure[dirPath]
+		if info.IsDir() {
+			entry.Directories = append(entry.Directories, filepath.Base(relPath))
+		} else {
+			entry.Files = append(entry.Files, filepath.Base(relPath))
+		}
+		structure[dirPath] = entry
+
+		return nil
+	})
+
+	return structure
+}
+
 func generateProjectSummary(rootDir string, regexPatterns []*regexp.Regexp) {
 	gitIgnore, err := ignore.CompileIgnoreFile(filepath.Join(rootDir, ".gitignore"))
 	if err != nil && !os.IsNotExist(err) {
@@ -71,13 +120,27 @@ func generateProjectSummary(rootDir string, regexPatterns []*regexp.Regexp) {
 		return
 	}
 
-	outputFile := filepath.Join(rootDir, "output.txt")
+	outputFile := filepath.Join(rootDir, "tmp/output.txt")
 	outFile, err := os.Create(outputFile)
 	if err != nil {
 		fmt.Printf("failed to create output file: %v", err)
 		return
 	}
 	defer outFile.Close()
+
+	// Capture and write project structure
+	structure := captureDirectoryStructure(rootDir, gitIgnore, summaryIgnore)
+	structureJSON, err := json.MarshalIndent(structure, "", "  ")
+	if err != nil {
+		fmt.Printf("failed to marshal project structure: %v", err)
+		return
+	}
+
+	_, err = fmt.Fprintf(outFile, "## Project Structure\n```json\n%s\n```\n\n", structureJSON)
+	if err != nil {
+		fmt.Printf("failed to write project structure: %v", err)
+		return
+	}
 
 	_, err = fmt.Fprint(outFile, "## File Contents\n\n")
 	if err != nil {
