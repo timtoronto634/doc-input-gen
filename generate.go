@@ -71,7 +71,7 @@ func generateProjectSummary(rootDir string, regexPatterns []*regexp.Regexp) {
 		return
 	}
 
-	outputFile := "output.txt"
+	outputFile := filepath.Join(rootDir, "output.txt")
 	outFile, err := os.Create(outputFile)
 	if err != nil {
 		fmt.Printf("failed to create output file: %v", err)
@@ -176,12 +176,12 @@ func readRegexPatternsFromFile(filePath string) ([]*regexp.Regexp, error) {
 }
 
 func generate() {
-	var projectDirectory string
-	fmt.Print("Enter the project directory path (leave blank for current directory): ")
-	fmt.Scanln(&projectDirectory)
-	if projectDirectory == "" {
+	var rootDir string
+	fmt.Print("Enter the root directory path (leave blank for current directory): ")
+	fmt.Scanln(&rootDir)
+	if rootDir == "" {
 		var err error
-		projectDirectory, err = os.Getwd()
+		rootDir, err = os.Getwd()
 		if err != nil {
 			fmt.Println("Error getting current directory:", err)
 			return
@@ -195,12 +195,12 @@ func generate() {
 	var regexPatterns []*regexp.Regexp
 	var err error
 	if option != "all" && option != "" {
-		regexPatterns, err = readRegexPatternsFromFile(option)
+		regexPatterns, err = readRegexPatternsFromFile(filepath.Join(rootDir, option))
 		if err != nil {
 			fmt.Printf("Error reading regex patterns: %v\n", err)
 			return
 		}
 	}
 
-	generateProjectSummary(projectDirectory, regexPatterns)
+	generateProjectSummary(rootDir, regexPatterns)
 }
